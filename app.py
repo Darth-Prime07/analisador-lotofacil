@@ -1,4 +1,4 @@
-# app.py (v4.0 - Versão Final com Gerador, Conferidor, Painel e Laboratório)
+# app.py (v4.1 - Simulador Restaurado)
 
 import streamlit as st
 import pandas as pd
@@ -19,10 +19,10 @@ from sklearn.cluster import KMeans
 import re
 
 # ==============================================================================
-# --- GERENCIAMENTO DE ESTRATÉGIAS (Carregar e Salvar) ---
+# --- GERENCIAMENTO DE ESTRATÉGIAS, CONFIGS, CLASSE E FUNÇÕES DE APOIO ---
+# (Nenhuma alteração em toda a lógica e estrutura, apenas na interface abaixo)
 # ==============================================================================
 ESTRATEGIAS_FILE = "estrategias.json"
-
 ESTRATEGIA_PADRAO_DEFAULT = {
     "nome": "Padrão (Manual)", "tipo": "Manual", "roi": -70.0,
     "alvo": {'Soma Média': 195, 'Pares Média': 8, 'Repetidas Média': 9, 'Primos Média': 5, 'Moldura Média': 10},
@@ -33,29 +33,17 @@ ESTRATEGIA_CONTRARIO_DEFAULT = {
     "alvo": {'Soma Média': 180, 'Pares Média': 7, 'Repetidas Média': 7, 'Primos Média': 6, 'Moldura Média': 11},
     "pesos": {'peso_proximidade_soma': 10, 'peso_proximidade_pares': 5, 'peso_proximidade_repetidas': 10, 'peso_por_fria': 25, 'peso_por_quente': -10, 'peso_proximidade_primos': 0, 'peso_proximidade_moldura': 0}
 }
-
 def carregar_estrategias():
     if os.path.exists(ESTRATEGIAS_FILE):
         with open(ESTRATEGIAS_FILE, 'r') as f:
-            try:
-                return json.load(f)
-            except json.JSONDecodeError:
-                return [ESTRATEGIA_PADRAO_DEFAULT, ESTRATEGIA_CONTRARIO_DEFAULT]
+            try: return json.load(f)
+            except json.JSONDecodeError: return [ESTRATEGIA_PADRAO_DEFAULT, ESTRATEGIA_CONTRARIO_DEFAULT]
     return [ESTRATEGIA_PADRAO_DEFAULT, ESTRATEGIA_CONTRARIO_DEFAULT]
-
 def salvar_estrategias(lista_estrategias):
     with open(ESTRATEGIAS_FILE, 'w') as f:
         json.dump(lista_estrategias, f, indent=4)
-
-# ==============================================================================
-# --- CONFIGURAÇÕES FINANCEIRAS ---
-# ==============================================================================
 CUSTO_JOGO_15_DEZENAS = 3.50
 PREMIOS_FIXOS = { 11: 7.0, 12: 14.0, 13: 35.0 }
-
-# ==============================================================================
-# --- CLASSE DO ANALISADOR ---
-# ==============================================================================
 class LotofacilAnalisador:
     def __init__(self, df, config, model=None):
         self.df = df; self.config = config; self.model = model
@@ -71,7 +59,6 @@ class LotofacilAnalisador:
                 Integer(-50, 0, name='peso_por_quente')
             ]
         }
-
     def _get_dezenas_frias(self, df, n=8):
         dezenas = np.arange(1, 26); atraso = {}
         ultimo_concurso_geral = df['Concurso'].max(); colunas_dezenas = [f'Bola{i+1}' for i in range(15)]
@@ -79,7 +66,6 @@ class LotofacilAnalisador:
             ultimo_concurso_dezena = df[df[colunas_dezenas].eq(dezena).any(axis=1)]['Concurso'].max()
             atraso[dezena] = len(df) if pd.isna(ultimo_concurso_dezena) else ultimo_concurso_geral - ultimo_concurso_dezena
         return sorted(atraso, key=atraso.get, reverse=True)[:n]
-
     def _analisar_tendencias(self, df_historico, n_concursos=15):
         df_tendencia = df_historico.tail(n_concursos); regras = {}
         colunas_bolas = [f'Bola{i+1}' for i in range(15)]
@@ -88,10 +74,8 @@ class LotofacilAnalisador:
         somas = [sum(row[colunas_bolas]) for _, row in df_tendencia.iterrows()]
         regras['soma_ideal'] = int(statistics.mean(somas)) if somas else 195
         return regras
-
     def _gerar_candidato_guiado(self, dezenas_a_gerar):
         return sorted(random.sample(self.universo, dezenas_a_gerar))
-        
     def _pontuar_jogo_dinamico(self, jogo, dados, pesos, alvo):
         score = 0
         stats = {
@@ -114,7 +98,6 @@ class LotofacilAnalisador:
         score += stats['frias'] * pesos.get('peso_por_fria', 0)
         score += stats['quentes'] * pesos.get('peso_por_quente', 0)
         return score
-
     def _gerar_melhores_jogos(self, n_jogos, dados, estrategia):
         pesos = estrategia['pesos']; alvo = estrategia.get('alvo'); num_candidatos = self.config.get("NUM_CANDIDATOS", 10000)
         jogos_pontuados = []
@@ -131,7 +114,6 @@ class LotofacilAnalisador:
                 jogos_vistos.add(tuple(jogo))
             if len(jogos_finais_com_score) == n_jogos: break
         return jogos_finais_com_score
-
     def _obter_analise_ia(self, jogos_com_score, dados, regras, perfil):
         if not self.model or not jogos_com_score: return None
         jogos_formatados = []
@@ -156,12 +138,10 @@ class LotofacilAnalisador:
             response = self.model.generate_content(prompt)
             return response.text
         except Exception as e: return f"Ocorreu um erro ao chamar a API: {e}"
-
     def gerar_jogos_com_analise(self, estrategia, n_jogos):
         st.toast("Analisando tendências do último concurso...")
         regras_dinamicas = self._analisar_tendencias(self.df)
-        dados_futuro = {}
-        dados_futuro['concurso_anterior'] = sorted([int(self.df.iloc[-1][f'Bola{i}']) for i in range(1, 16)])
+        dados_futuro = {}; dados_futuro['concurso_anterior'] = sorted([int(self.df.iloc[-1][f'Bola{i}']) for i in range(1, 16)])
         frequencias = pd.Series(self.df[[f'Bola{i}' for i in range(1, 16)]].values.flatten()).value_counts()
         dados_futuro['quentes'] = sorted(list(frequencias.head(8).index.astype(int)))
         dados_futuro['frias'] = self._get_dezenas_frias(self.df, n=8)
@@ -170,7 +150,6 @@ class LotofacilAnalisador:
         st.toast("Solicitando análise da IA do Gemini...")
         analise_ia = self._obter_analise_ia(jogos_com_score, dados_futuro, regras_dinamicas, estrategia['nome'])
         return {"jogos": jogos_com_score, "analise": analise_ia}
-
     def rodar_simulacao(self):
         concursos_para_testar = self.df.tail(self.config['NUMERO_DE_CONCURSOS_A_TESTAR'])
         resultados_por_estrategia = {est['nome']: {'resumo_acertos': {i: 0 for i in range(11, 16)}, 'custo': 0.0, 'retorno': 0.0} for est in self.estrategias}
@@ -216,7 +195,6 @@ class LotofacilAnalisador:
             "historico_detalhado": historico_jogos_detalhado,
             "metricas_gerais": {"custo_total": custo_total, "retorno_total": retorno_total, "lucro_total": lucro_total, "roi_total": roi_total}
         }
-
     def descobrir_perfis(self, n_perfis):
         df_analise = self.df.copy()
         bola_cols = [f'Bola{i}' for i in range(1, 16)]
@@ -247,7 +225,6 @@ class LotofacilAnalisador:
             }
             perfis_analisados.append(perfil)
         return perfis_analisados, features_df['perfil_descoberto'].value_counts()
-    
     def _backtest_silencioso(self, pesos, alvo):
         concursos_para_testar = self.df.tail(self.config['NUMERO_DE_CONCURSOS_A_TESTAR'])
         custo_total = 0.0; retorno_total = 0.0
@@ -264,7 +241,6 @@ class LotofacilAnalisador:
                 retorno_total += PREMIOS_FIXOS.get(acertos, 0.0)
         roi = ((retorno_total - custo_total) / custo_total * 100) if custo_total > 0 else -100
         return roi
-
     def otimizar_estrategia(self, perfil_alvo, status_placeholder):
         search_space = self.search_spaces.get("Descoberto")
         @use_named_args(search_space)
@@ -277,13 +253,11 @@ class LotofacilAnalisador:
                 st.write(log_message)
             resultados_parciais.append(roi)
             return -roi
-        
         resultados_parciais = []
         resultado_otimizacao = gp_minimize(func=funcao_objetivo, dimensions=search_space, n_calls=self.config['OTIMIZACAO_CHAMADAS'], random_state=42)
         melhor_roi = -resultado_otimizacao.fun
         melhores_pesos = {dim.name: int(val) for dim, val in zip(search_space, resultado_otimizacao.x)}
         return {"roi": melhor_roi, "pesos": melhores_pesos}
-
     def simular_estrategia_unica(self, estrategia):
         concursos_para_testar = self.df.tail(self.config['NUMERO_DE_CONCURSOS_A_TESTAR'])
         resultados = {'resumo_acertos': {i: 0 for i in range(11, 16)}, 'custo': 0.0, 'retorno': 0.0}
@@ -397,6 +371,7 @@ st.set_page_config(layout="wide", page_title="Analisador Lotofácil com IA")
 st.title("🤖 Analisador Inteligente da Lotofácil")
 
 st.sidebar.title("Ferramentas")
+# --- MENU CORRIGIDO COM TODAS AS 4 OPÇÕES ---
 modo_app = st.sidebar.radio(
     "Escolha o que deseja fazer:",
     ["Gerador de Jogos", "Conferidor de Apostas", "Painel de Estratégias", "Laboratório de IA"],
@@ -462,6 +437,52 @@ elif modo_app == "Conferidor de Apostas":
                 st.markdown("---")
                 st.dataframe(resultados['detalhes'].style.set_properties(**{'text-align': 'center'}), use_container_width=True)
 
+elif modo_app == "Simulador de Estratégias":
+    st.header("Simulador de Estratégias (Backtest Financeiro)")
+    st.sidebar.header("Configurações da Simulação")
+    concursos_a_testar = st.sidebar.slider("Quantos concursos testar?", min_value=10, max_value=500, value=50, step=10)
+    jogos_por_simulacao = st.sidebar.slider("Quantos jogos simular por concurso?", min_value=1, max_value=50, value=10, step=1)
+    if st.sidebar.button("Rodar Simulação", type="primary", use_container_width=True):
+        estrategias_atuais = carregar_estrategias()
+        CONFIG = {"NUMERO_DE_CONCURSOS_A_TESTAR": concursos_a_testar, "JOGOS_POR_SIMULACAO": jogos_por_simulacao, "DEZENAS_POR_JOGO": 15, "NUM_CANDIDATOS": 10000, "ESTRATEGIAS_ATUAIS": estrategias_atuais}
+        analisador = LotofacilAnalisador(df, CONFIG)
+        resultados = analisador.rodar_simulacao()
+        st.subheader("Resultados Financeiros da Simulação")
+        m = resultados['metricas_gerais']
+        kpi1, kpi2, kpi3 = st.columns(3)
+        kpi1.metric("Lucro / Prejuízo Total", f"R$ {m['lucro_total']:.2f}", f"{m['roi_total']:.2f}% ROI")
+        kpi2.metric("Custo Total", f"R$ {m['custo_total']:.2f}")
+        kpi3.metric("Retorno Total", f"R$ {m['retorno_total']:.2f}")
+        st.markdown("---")
+        st.subheader("Análise Detalhada por Estratégia")
+        res_est = resultados['resultados_por_estrategia']
+        cols = st.columns(len(res_est) if res_est else 1)
+        for i, (nome_est, dados_est) in enumerate(res_est.items()):
+            with cols[i]:
+                st.markdown(f"##### {nome_est}")
+                lucro = dados_est['retorno'] - dados_est['custo']
+                roi = (lucro / dados_est['custo'] * 100) if dados_est['custo'] > 0 else 0
+                st.metric("Lucro / Prejuízo", f"R$ {lucro:.2f}", f"{roi:.2f}% ROI")
+                st.markdown("**Resumo de Acertos:**")
+                df_acertos = pd.DataFrame(list(dados_est['resumo_acertos'].items()), columns=['Acertos', 'Quantidade']).sort_values(by='Acertos')
+                df_acertos = df_acertos[df_acertos['Quantidade'] > 0].set_index('Acertos')
+                st.dataframe(df_acertos.style.set_properties(**{'text-align': 'center', 'font-size': '13px'}), use_container_width=True)
+        st.subheader("Gráficos de Desempenho")
+        fig1, fig2 = gerar_graficos(res_est, resultados['historico_lucro'])
+        st.pyplot(fig1)
+        st.pyplot(fig2)
+        with st.expander("Ver Detalhes dos Jogos Simulados"):
+            for resultado_concurso in reversed(resultados['historico_detalhado']):
+                st.markdown(f"#### Concurso: **{resultado_concurso['concurso_n']}**")
+                st.markdown(f"**Resultado Real:** {resultado_concurso['resultado_real']}")
+                df_jogos = resultado_concurso['jogos_gerados']
+                def colorir_premios(val):
+                    color = '#2E8B57' if val >= 11 else ''
+                    return f'background-color: {color}'
+                st.dataframe(df_jogos.style.apply(lambda x: x.map(colorir_premios), subset=['acertos']).set_properties(**{'text-align': 'center', 'font-size': '13px'}).hide(axis="index"), use_container_width=True)
+    else:
+        st.info("Ajuste as configurações da simulação na barra lateral e clique em 'Rodar Simulação' para começar.")
+
 elif modo_app == "Painel de Estratégias":
     st.header("📊 Painel de Controle de Estratégias")
     st.info("Aqui você pode gerenciar, analisar e comparar o desempenho histórico de todas as suas estratégias salvas.")
@@ -490,15 +511,16 @@ elif modo_app == "Painel de Estratégias":
             with col2:
                 st.markdown("##### Simulação de Desempenho Histórico")
                 if st.button("Rodar Simulação de Desempenho para esta Estratégia"):
-                    CONFIG = {"NUMERO_DE_CONCURSOS_A_TESTAR": 100, "JOGOS_POR_SIMULACAO": 10, "NUM_CANDIDATOS": 5000}
+                    CONFIG = {"NUMERO_DE_CONCURSOS_A_TESTAR": 100, "JOGOS_POR_SIMULACAO": 10, "NUM_CANDIDATOS": 5000, "ESTRATEGIAS_ATUAIS": [estrategia_obj]}
                     analisador = LotofacilAnalisador(df, CONFIG)
                     with st.spinner("Realizando backtest..."):
-                        resultados, historico_lucro = analisador.simular_estrategia_unica(estrategia_obj)
-                    lucro = resultados['retorno'] - resultados['custo']
-                    roi = (lucro / resultados['custo'] * 100) if resultados['custo'] > 0 else 0
+                        resultados = analisador.rodar_simulacao()
+                    res_est = resultados['resultados_por_estrategia'][estrategia_obj['nome']]
+                    lucro = res_est['retorno'] - res_est['custo']
+                    roi = (lucro / res_est['custo'] * 100) if res_est['custo'] > 0 else 0
                     st.metric(f"Resultado da Simulação (100 Concursos)", f"R$ {lucro:.2f}", f"{roi:.2f}% ROI")
                     fig, ax = plt.subplots(figsize=(10, 5))
-                    ax.plot(historico_lucro, marker='o', linestyle='-', color='royalblue')
+                    ax.plot(resultados['historico_lucro'], marker='o', linestyle='-', color='royalblue')
                     ax.axhline(0, color='red', linestyle='--', linewidth=1.2, label='Ponto de Equilíbrio (R$ 0)')
                     ax.set_title(f'Evolução do Saldo para a Estratégia "{estrategia_obj["nome"]}"'); ax.set_xlabel('Concursos Simulados'); ax.set_ylabel('Saldo Acumulado (R$)')
                     ax.grid(True, which='both', linestyle='--', linewidth=0.5); ax.legend()
