@@ -57,7 +57,6 @@ PREMIOS_FIXOS = { 11: 7.0, 12: 14.0, 13: 35.0 }
 # --- CLASSE DO ANALISADOR ---
 # ==============================================================================
 class LotofacilAnalisador:
-    # (A classe inteira permanece a mesma das versões anteriores)
     def __init__(self, df, config, model=None):
         self.df = df; self.config = config; self.model = model
         self.universo = list(range(1, 26)); self.miolo = {7, 8, 9, 12, 13, 14, 17, 18, 19}
@@ -134,27 +133,261 @@ class LotofacilAnalisador:
         return jogos_finais_com_score
 
     def _obter_analise_ia(self, jogos_com_score, dados, regras, perfil):
-        # ... (código inalterado)
-        
+        if not self.model or not jogos_com_score: return None
+        jogos_formatados = []
+        for jogo, score in jogos_com_score:
+            soma = sum(jogo); repetidas = len(set(jogo) & set(dados['concurso_anterior']))
+            pares = len([n for n in jogo if n % 2 == 0]); frias = len(set(jogo) & set(dados['frias']))
+            quentes = len(set(jogo) & set(dados['quentes']))
+            jogos_formatados.append(f"- Jogo: {jogo}\n  - Pontuação: {score:.2f}\n  - Estatísticas: Soma={soma}, Repetidas={repetidas}, Pares={pares}, Frias={frias}, Quentes={quentes}")
+        texto_jogos = "\n".join(jogos_formatados)
+        prompt = f"""
+        Aja como um especialista em análise de loterias. Sua tarefa é fornecer uma análise qualitativa e sucinta sobre jogos gerados por um algoritmo.
+        **ESTRATÉGIA APLICADA:** {perfil}
+        **METAS DO ALGORITMO:**
+        - Dezenas Frias (observar): {dados['frias']}
+        - Tendência Repetidas (meta): {regras['repetidas_ideal']} | Tendência Soma (meta): {regras['soma_ideal']}
+        **JOGOS GERADOS E SUAS ESTATÍSTICAS:**
+        {texto_jogos}
+        **SUA ANÁLISE:**
+        Explique por que estes jogos receberam uma alta pontuação, comparando suas estatísticas com as metas.
+        """
+        try:
+            response = self.model.generate_content(prompt)
+            return response.text
+        except Exception as e: return f"Ocorreu um erro ao chamar a API: {e}"
+
     def gerar_jogos_com_analise(self, estrategia, n_jogos):
-        # ... (código inalterado)
+        st.toast("Analisando tendências do último concurso...")
+        regras_dinamicas = self._analisar_tendencias(self.df)
+        dados_futuro = {}
+        dados_futuro['concurso_anterior'] = sorted([int(self.df.iloc[-1][f'Bola{i}']) for i in range(1, 16)])
+        frequencias = pd.Series(self.df[[f'Bola{i}' for i in range(1, 16)]].values.flatten()).value_counts()
+        dados_futuro['quentes'] = sorted(list(frequencias.head(8).index.astype(int)))
+        dados_futuro['frias'] = self._get_dezenas_frias(self.df, n=8)
+        st.toast(f"Gerando e pontuando jogos com a estratégia '{estrategia['nome']}'...")
+        jogos_com_score = self._gerar_melhores_jogos(n_jogos, dados_futuro, estrategia)
+        st.toast("Solicitando análise da IA do Gemini...")
+        analise_ia = self._obter_analise_ia(jogos_com_score, dados_futuro, regras_dinamicas, estrategia['nome'])
+        return {"jogos": jogos_com_score, "analise": analise_ia}
 
-    def simular_estrategia_unica(self, estrategia):
-        # ... (código inalterado)
-        
+    def rodar_simulacao(self):
+        concursos_para_testar = self.df.tail(self.config['NUMERO_DE_CONCURSOS_A_TESTAR'])
+        resultados_por_estrategia = {est['nome']: {'resumo_acertos': {i: 0 for i in range(11, 16)}, 'custo': 0.0, 'retorno': 0.0} for est in self.estrategias}
+        historico_lucro_acumulado = []; lucro_total_acumulado = 0.0
+        historico_jogos_detalhado = []
+        barra_progresso = st.progress(0, text="Simulando concursos...")
+        for i, (_, concurso_alvo) in enumerate(concursos_para_testar.iterrows()):
+            num_concurso_alvo = int(concurso_alvo['Concurso'])
+            df_historico = self.df[self.df['Concurso'] < num_concurso_alvo]
+            if df_historico.empty: continue
+            resultado_real = sorted([int(concurso_alvo[f'Bola{i}']) for i in range(1, 16)])
+            dados = {'concurso_anterior': sorted([int(df_historico.iloc[-1][f'Bola{i}']) for i in range(1, 16)]), 'quentes': [], 'frias': self._get_dezenas_frias(df_historico, n=8)}
+            custo_neste_concurso = 0.0; retorno_neste_concurso = 0.0
+            jogos_deste_concurso_para_df = []
+            for estrategia in self.estrategias:
+                jogos_por_estrategia = self.config['JOGOS_POR_SIMULACAO'] // len(self.estrategias)
+                if jogos_por_estrategia == 0: jogos_por_estrategia = 1
+                jogos_gerados_com_score = self._gerar_melhores_jogos(jogos_por_estrategia, dados, estrategia)
+                for jogo, score in jogos_gerados_com_score:
+                    acertos = len(set(jogo) & set(resultado_real))
+                    jogos_deste_concurso_para_df.append({"estrategia": estrategia['nome'], "jogo": ", ".join(map(str, jogo)), "acertos": acertos})
+                    if acertos >= 11 and acertos <= 15:
+                        resultados_por_estrategia[estrategia['nome']]['resumo_acertos'][acertos] += 1
+                    premio = PREMIOS_FIXOS.get(acertos, 0.0)
+                    resultados_por_estrategia[estrategia['nome']]['custo'] += CUSTO_JOGO_15_DEZENAS
+                    custo_neste_concurso += CUSTO_JOGO_15_DEZENAS
+                    if premio > 0:
+                        resultados_por_estrategia[estrategia['nome']]['retorno'] += premio
+                        retorno_neste_concurso += premio
+            historico_jogos_detalhado.append({"concurso_n": num_concurso_alvo, "resultado_real": ", ".join(map(str, resultado_real)), "jogos_gerados": pd.DataFrame(jogos_deste_concurso_para_df)})
+            lucro_neste_concurso = retorno_neste_concurso - custo_neste_concurso
+            lucro_total_acumulado += lucro_neste_concurso
+            historico_lucro_acumulado.append(lucro_total_acumulado)
+            barra_progresso.progress((i + 1) / len(concursos_para_testar), text=f"Simulando Concurso {num_concurso_alvo}")
+        barra_progresso.empty()
+        custo_total = sum(v['custo'] for v in resultados_por_estrategia.values())
+        retorno_total = sum(v['retorno'] for v in resultados_por_estrategia.values())
+        lucro_total = retorno_total - custo_total
+        roi_total = (lucro_total / custo_total * 100) if custo_total > 0 else 0
+        return {
+            "resultados_por_estrategia": resultados_por_estrategia,
+            "historico_lucro": historico_lucro_acumulado,
+            "historico_detalhado": historico_jogos_detalhado,
+            "metricas_gerais": {"custo_total": custo_total, "retorno_total": retorno_total, "lucro_total": lucro_total, "roi_total": roi_total}
+        }
+
     def descobrir_perfis(self, n_perfis):
-        # ... (código inalterado)
-
+        df_analise = self.df.copy()
+        bola_cols = [f'Bola{i}' for i in range(1, 16)]
+        df_anterior = self.df[bola_cols].shift(1)
+        def calcular_repetidas(row):
+            if pd.isna(row.iloc[-15:].sum()): return None
+            return len(set(row.iloc[:15].values) & set(row.iloc[-15:].values))
+        df_merged = pd.concat([df_analise[bola_cols], df_anterior.rename(columns=lambda c: f"{c}_ant")], axis=1)
+        df_analise['soma'] = df_analise[bola_cols].sum(axis=1)
+        df_analise['pares'] = df_analise[bola_cols].apply(lambda row: sum(1 for n in row if n % 2 == 0), axis=1)
+        df_analise['repetidas'] = df_merged.apply(calcular_repetidas, axis=1)
+        df_analise['primos'] = df_analise[bola_cols].apply(lambda row: len(set(row) & self.primos), axis=1)
+        df_analise['moldura'] = df_analise[bola_cols].apply(lambda row: len(set(row) & self.moldura), axis=1)
+        features_list = ['soma', 'pares', 'repetidas', 'primos', 'moldura']
+        features_df = df_analise[features_list].dropna()
+        scaler = StandardScaler()
+        features_scaled = scaler.fit_transform(features_df)
+        kmeans = KMeans(n_clusters=n_perfis, random_state=42, n_init='auto')
+        features_df['perfil_descoberto'] = kmeans.fit_predict(features_scaled)
+        centros_reais = scaler.inverse_transform(kmeans.cluster_centers_)
+        perfis_analisados = []
+        for i, centro in enumerate(centros_reais):
+            perfil = {
+                "Soma Média": round(centro[0]), "Pares Média": round(centro[1]),
+                "Repetidas Média": round(centro[2]), "Primos Média": round(centro[3]),
+                "Moldura Média": round(centro[4]),
+                "Ocorrências": int(features_df['perfil_descoberto'].value_counts()[i])
+            }
+            perfis_analisados.append(perfil)
+        return perfis_analisados, features_df['perfil_descoberto'].value_counts()
+    
     def _backtest_silencioso(self, pesos, alvo):
-        # ... (código inalterado)
+        concursos_para_testar = self.df.tail(self.config['NUMERO_DE_CONCURSOS_A_TESTAR'])
+        custo_total = 0.0; retorno_total = 0.0
+        estrategia_teste = {"pesos": pesos, "alvo": alvo}
+        for _, concurso_alvo in concursos_para_testar.iterrows():
+            df_historico = self.df[self.df['Concurso'] < int(concurso_alvo['Concurso'])]
+            if df_historico.empty: continue
+            resultado_real = sorted([int(concurso_alvo[f'Bola{i}']) for i in range(1, 16)])
+            dados = {'concurso_anterior': sorted([int(df_historico.iloc[-1][f'Bola{i}']) for i in range(1, 16)]), 'quentes': [], 'frias': self._get_dezenas_frias(df_historico, n=8)}
+            jogos_gerados_com_score = self._gerar_melhores_jogos(self.config['JOGOS_POR_SIMULACAO'], dados, estrategia_teste)
+            for jogo, score in jogos_gerados_com_score:
+                custo_total += CUSTO_JOGO_15_DEZENAS
+                acertos = len(set(jogo) & set(resultado_real))
+                retorno_total += PREMIOS_FIXOS.get(acertos, 0.0)
+        roi = ((retorno_total - custo_total) / custo_total * 100) if custo_total > 0 else -100
+        return roi
 
     def otimizar_estrategia(self, perfil_alvo, status_placeholder):
-        # ... (código inalterado)
-    
+        search_space = self.search_spaces.get("Descoberto")
+        @use_named_args(search_space)
+        def funcao_objetivo(**params):
+            roi = self._backtest_silencioso(params, perfil_alvo)
+            iteracao_atual = len(resultados_parciais) + 1
+            log_message = f"Teste {iteracao_atual}/{self.config['OTIMIZACAO_CHAMADAS']} -> ROI: {roi:.2f}%"
+            print(log_message)
+            with status_placeholder:
+                st.write(log_message)
+            resultados_parciais.append(roi)
+            return -roi
+        
+        resultados_parciais = []
+        resultado_otimizacao = gp_minimize(func=funcao_objetivo, dimensions=search_space, n_calls=self.config['OTIMIZACAO_CHAMADAS'], random_state=42)
+        melhor_roi = -resultado_otimizacao.fun
+        melhores_pesos = {dim.name: int(val) for dim, val in zip(search_space, resultado_otimizacao.x)}
+        return {"roi": melhor_roi, "pesos": melhores_pesos}
+
+    def simular_estrategia_unica(self, estrategia):
+        concursos_para_testar = self.df.tail(self.config['NUMERO_DE_CONCURSOS_A_TESTAR'])
+        resultados = {'resumo_acertos': {i: 0 for i in range(11, 16)}, 'custo': 0.0, 'retorno': 0.0}
+        historico_lucro_acumulado = []; lucro_total_acumulado = 0.0
+        barra_progresso = st.progress(0, text=f"Simulando estratégia '{estrategia['nome']}'...")
+        for i, (_, concurso_alvo) in enumerate(concursos_para_testar.iterrows()):
+            num_concurso_alvo = int(concurso_alvo['Concurso'])
+            df_historico = self.df[self.df['Concurso'] < num_concurso_alvo]
+            if df_historico.empty: continue
+            resultado_real = sorted([int(concurso_alvo[f'Bola{i}']) for i in range(1, 16)])
+            dados = {'concurso_anterior': sorted([int(df_historico.iloc[-1][f'Bola{i}']) for i in range(1, 16)]), 'quentes': [], 'frias': self._get_dezenas_frias(df_historico, n=8)}
+            jogos_gerados = self._gerar_melhores_jogos(self.config['JOGOS_POR_SIMULACAO'], dados, estrategia)
+            custo_neste_concurso = 0.0; retorno_neste_concurso = 0.0
+            for jogo, score in jogos_gerados:
+                acertos = len(set(jogo) & set(resultado_real))
+                if 11 <= acertos <= 15:
+                    resultados['resumo_acertos'][acertos] += 1
+                premio = PREMIOS_FIXOS.get(acertos, 0.0)
+                resultados['custo'] += CUSTO_JOGO_15_DEZENAS
+                custo_neste_concurso += CUSTO_JOGO_15_DEZENAS
+                if premio > 0:
+                    resultados['retorno'] += premio
+                    retorno_neste_concurso += premio
+            lucro_neste_concurso = retorno_neste_concurso - custo_neste_concurso
+            lucro_total_acumulado += lucro_neste_concurso
+            historico_lucro_acumulado.append(lucro_total_acumulado)
+            barra_progresso.progress((i + 1) / len(concursos_para_testar))
+        barra_progresso.empty()
+        return resultados, historico_lucro_acumulado
+
 # ==============================================================================
 # --- FUNÇÕES DE APOIO E INTERFACE ---
 # ==============================================================================
-# (código inalterado)
+@st.cache_data(ttl=3600)
+def carregar_dados():
+    creds_dict = json.loads(st.secrets["GSPREAD_CREDENTIALS"])
+    gc = gspread.service_account_from_dict(creds_dict)
+    spreadsheet = gc.open_by_url("https://docs.google.com/spreadsheets/d/1cc-JxB_-FkOEIeD_t2SZ9RFpKr3deUfCFuTR_2wXCYk/edit?gid=498647709#gid=498647709")
+    worksheet = spreadsheet.sheet1
+    rows = worksheet.get_all_records()
+    df = pd.DataFrame(rows)
+    bola_cols = [f'Bola{i}' for i in range(1, 16)]
+    for col in ['Concurso'] + bola_cols:
+        df[col] = pd.to_numeric(df[col], errors='coerce')
+    df.dropna(subset=['Concurso'] + bola_cols, inplace=True)
+    df[bola_cols] = df[bola_cols].astype(int); df['Concurso'] = df['Concurso'].astype(int)
+    df.sort_values(by='Concurso', inplace=True)
+    return df
+@st.cache_resource
+def carregar_modelo_ia():
+    try:
+        genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
+        model = genai.GenerativeModel('gemini-1.5-pro-latest')
+        return model
+    except Exception as e:
+        st.error(f"Erro ao configurar o modelo de IA. Verifique seu 'secrets.toml'. Detalhes: {e}")
+        return None
+def gerar_graficos(resultados_por_estrategia, historico_lucro):
+    fig1, ax1 = plt.subplots(figsize=(10, 6))
+    nomes_estrategias = list(resultados_por_estrategia.keys())
+    lucros = [v['retorno'] - v['custo'] for v in resultados_por_estrategia.values()]
+    cores = ['royalblue' if l >= 0 else 'salmon' for l in lucros]
+    bars = ax1.bar(nomes_estrategias, lucros, color=cores)
+    ax1.set_ylabel('Lucro / Prejuízo (R$)'); ax1.set_title('Resultado Financeiro Final por Estratégia')
+    ax1.axhline(0, color='black', linewidth=0.8); ax1.bar_label(bars, fmt='R$ %.2f')
+    plt.xticks(rotation=45, ha="right")
+    fig2, ax2 = plt.subplots(figsize=(10, 5))
+    ax2.plot(historico_lucro, marker='o', linestyle='-', color='green')
+    ax2.axhline(0, color='red', linestyle='--', linewidth=1.2, label='Ponto de Equilíbrio (R$ 0)')
+    ax2.set_title('Evolução do Saldo Financeiro Acumulado'); ax2.set_xlabel('Concursos Simulados')
+    ax2.set_ylabel('Saldo Acumulado (R$)'); ax2.grid(True, which='both', linestyle='--', linewidth=0.5); ax2.legend()
+    return fig1, fig2
+def conferir_jogos(texto_resultado, texto_apostas):
+    numeros_resultado = set(map(int, re.findall(r'\d+', texto_resultado)))
+    if len(numeros_resultado) != 15:
+        st.error(f"O resultado oficial deve ter 15 dezenas. Você inseriu {len(numeros_resultado)}.")
+        return None
+    apostas = []
+    linhas = texto_apostas.strip().split('\n')
+    for i, linha in enumerate(linhas):
+        try:
+            aposta = list(map(int, re.findall(r'\d+', linha)))
+            if len(aposta) == 15:
+                apostas.append(aposta)
+            else:
+                st.warning(f"A linha {i+1} dos seus jogos foi ignorada pois não continha 15 dezenas.")
+        except:
+            st.warning(f"A linha {i+1} dos seus jogos foi ignorada por um erro de formato.")
+    if not apostas:
+        st.error("Nenhum jogo válido com 15 dezenas foi encontrado no campo 'Meus Jogos'.")
+        return None
+    resultados_detalhados = []
+    resumo_acertos = {i: 0 for i in range(11, 16)}
+    retorno_total = 0.0
+    for aposta in apostas:
+        acertos = len(set(aposta) & numeros_resultado)
+        premio = PREMIOS_FIXOS.get(acertos, 0.0)
+        retorno_total += premio
+        if acertos >= 11:
+            resumo_acertos[acertos] += 1
+        resultados_detalhados.append({"Jogo": ", ".join(map(str, sorted(aposta))), "Acertos": acertos, "Prêmio (R$)": f"{premio:.2f}"})
+    custo_total = len(apostas) * CUSTO_JOGO_15_DEZENAS
+    lucro = retorno_total - custo_total
+    return {"custo": custo_total, "retorno": retorno_total, "lucro": lucro, "resumo_acertos": resumo_acertos, "detalhes": pd.DataFrame(resultados_detalhados)}
 
 # ==============================================================================
 # --- INTERFACE PRINCIPAL DO STREAMLIT ---
@@ -170,4 +403,148 @@ modo_app = st.sidebar.radio(
     key="navigation"
 )
 
-# (Resto do código da interface, incluindo as 4 páginas)
+try:
+    df = carregar_dados()
+    model = carregar_modelo_ia() if modo_app == "Gerador de Jogos" else None
+    st.sidebar.success(f"Base de dados carregada! \n\nÚltimo concurso: {df['Concurso'].max()}")
+    with st.sidebar.expander("Ver Estratégias Salvas", expanded=True):
+        estrategias_atuais = carregar_estrategias()
+        if not estrategias_atuais:
+            st.write("Nenhuma estratégia salva. Use o Laboratório de IA.")
+        for i, est in enumerate(estrategias_atuais):
+            st.write(f"**{est['nome']}** (ROI Salvo: {est['roi']:.2f}%)")
+except Exception as e:
+    st.error(f"Ocorreu um erro fatal no carregamento: {e}"); st.stop()
+
+if modo_app == "Gerador de Jogos":
+    st.header("Gerador de Jogos para o Próximo Concurso")
+    st.sidebar.header("Configurações de Geração")
+    estrategias_salvas = carregar_estrategias()
+    nomes_estrategias = [est['nome'] for est in estrategias_salvas]
+    estrategia_selecionada_nome = st.sidebar.selectbox("Escolha a Estratégia a ser usada:", nomes_estrategias)
+    jogos_a_gerar = st.sidebar.slider("Quantos jogos você deseja gerar?", min_value=1, max_value=30, value=6, step=1)
+    if st.sidebar.button("Gerar Jogos Inteligentes", type="primary", use_container_width=True):
+        estrategia_obj = next((item for item in estrategias_salvas if item["nome"] == estrategia_selecionada_nome), None)
+        if estrategia_obj:
+            CONFIG = {"NUM_CANDIDATOS": 20000}
+            analisador = LotofacilAnalisador(df, CONFIG, model)
+            with st.spinner(f"Gerando jogos com a estratégia '{estrategia_obj['nome']}'..."):
+                resultados = analisador.gerar_jogos_com_analise(estrategia_obj, jogos_a_gerar)
+            st.subheader(f"Resultados da Estratégia: {estrategia_obj['nome']}")
+            df_jogos = pd.DataFrame([jogo for jogo, score in resultados["jogos"]], columns=[f'D{i+1}' for i in range(15)])
+            st.dataframe(df_jogos.style.set_properties(**{'text-align': 'center', 'font-size': '13px'}).hide(axis="index"), use_container_width=True)
+            with st.expander("Ver Análise da IA para esta Estratégia"):
+                if resultados["analise"]: st.markdown(resultados["analise"])
+        else:
+            st.error("Estratégia selecionada não foi encontrada.")
+    else:
+        st.info("Ajuste as configurações e clique para gerar os jogos.")
+
+elif modo_app == "Conferidor de Apostas":
+    st.header("🎯 Conferidor de Apostas")
+    st.info("Cole o resultado oficial e os jogos que você apostou para ver seu desempenho.")
+    col1, col2 = st.columns(2)
+    with col1:
+        texto_resultado = st.text_area("Cole aqui o resultado oficial (15 dezenas)", placeholder="Ex: 1, 2, 3, 5, 8, 9, 10, 12, 14, 15, 17, 20, 21, 23, 25")
+    with col2:
+        texto_apostas = st.text_area("Cole aqui os seus jogos (um por linha)", placeholder="[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]\nJogo 2 (Padrão): [1, 2, 3, 6, 10, 11, 12, 14...]", height=200)
+    if st.button("Conferir Resultados", type="primary", use_container_width=True):
+        if not texto_resultado or not texto_apostas:
+            st.warning("Por favor, preencha ambos os campos.")
+        else:
+            resultados = conferir_jogos(texto_resultado, texto_apostas)
+            if resultados:
+                st.subheader("Relatório de Desempenho")
+                kpi1, kpi2, kpi3 = st.columns(3)
+                kpi1.metric("Lucro / Prejuízo", f"R$ {resultados['lucro']:.2f}")
+                kpi2.metric("Custo Total", f"R$ {resultados['custo']:.2f}")
+                kpi3.metric("Retorno Total", f"R$ {resultados['retorno']:.2f}")
+                st.markdown("---")
+                st.dataframe(resultados['detalhes'].style.set_properties(**{'text-align': 'center'}), use_container_width=True)
+
+elif modo_app == "Painel de Estratégias":
+    st.header("📊 Painel de Controle de Estratégias")
+    st.info("Aqui você pode gerenciar, analisar e comparar o desempenho histórico de todas as suas estratégias salvas.")
+    estrategias_salvas = carregar_estrategias()
+    nomes_estrategias = [est['nome'] for est in estrategias_salvas]
+    if not nomes_estrategias:
+        st.warning("Nenhuma estratégia salva encontrada. Use o 'Laboratório de IA' para descobrir e salvar novas estratégias.")
+    else:
+        estrategia_selecionada_nome = st.selectbox("Selecione uma estratégia para analisar em detalhes:", nomes_estrategias)
+        estrategia_obj = next((item for item in estrategias_salvas if item["nome"] == estrategia_selecionada_nome), None)
+        if estrategia_obj:
+            st.subheader(f"Análise da Estratégia: {estrategia_obj['nome']}")
+            col1, col2 = st.columns([1, 2])
+            with col1:
+                st.write("**Tipo:**", estrategia_obj['tipo'])
+                st.metric("ROI Salvo", f"{estrategia_obj['roi']:.2f}%")
+                with st.expander("Ver Alvo da Estratégia"):
+                    st.json(estrategia_obj.get('alvo', 'N/A'))
+                with st.expander("Ver Pesos da Estratégia"):
+                    st.json(estrategia_obj['pesos'])
+                if st.button("🚨 Excluir esta Estratégia"):
+                    estrategias_salvas.remove(estrategia_obj)
+                    salvar_estrategias(estrategias_salvas)
+                    st.success(f"Estratégia '{estrategia_obj['nome']}' foi excluída.")
+                    st.rerun()
+            with col2:
+                st.markdown("##### Simulação de Desempenho Histórico")
+                if st.button("Rodar Simulação de Desempenho para esta Estratégia"):
+                    CONFIG = {"NUMERO_DE_CONCURSOS_A_TESTAR": 100, "JOGOS_POR_SIMULACAO": 10, "NUM_CANDIDATOS": 5000}
+                    analisador = LotofacilAnalisador(df, CONFIG)
+                    with st.spinner("Realizando backtest..."):
+                        resultados, historico_lucro = analisador.simular_estrategia_unica(estrategia_obj)
+                    lucro = resultados['retorno'] - resultados['custo']
+                    roi = (lucro / resultados['custo'] * 100) if resultados['custo'] > 0 else 0
+                    st.metric(f"Resultado da Simulação (100 Concursos)", f"R$ {lucro:.2f}", f"{roi:.2f}% ROI")
+                    fig, ax = plt.subplots(figsize=(10, 5))
+                    ax.plot(historico_lucro, marker='o', linestyle='-', color='royalblue')
+                    ax.axhline(0, color='red', linestyle='--', linewidth=1.2, label='Ponto de Equilíbrio (R$ 0)')
+                    ax.set_title(f'Evolução do Saldo para a Estratégia "{estrategia_obj["nome"]}"'); ax.set_xlabel('Concursos Simulados'); ax.set_ylabel('Saldo Acumulado (R$)')
+                    ax.grid(True, which='both', linestyle='--', linewidth=0.5); ax.legend()
+                    st.pyplot(fig)
+
+elif modo_app == "Laboratório de IA":
+    st.header("🔬 Laboratório de IA: Descoberta e Otimização")
+    st.info("Esta ferramenta automatiza a descoberta de novos perfis de jogo e a otimização de estratégias para eles.")
+    st.warning("**Atenção:** Este processo é extremamente demorado e pode levar horas.", icon="⏳")
+    st.sidebar.header("Configurações do Laboratório")
+    n_perfis = st.sidebar.number_input("Quantos perfis a IA deve procurar?", min_value=2, max_value=10, value=3, step=1)
+    chamadas_otimizacao = st.sidebar.slider("Qualidade da Otimização (por perfil)", min_value=10, max_value=200, value=20, step=5)
+    if st.sidebar.button("Iniciar Descoberta e Otimização", type="primary", use_container_width=True):
+        CONFIG = {"NUMERO_DE_CONCURSOS_A_TESTAR": 100, "JOGOS_POR_SIMULACAO": 10, "NUM_CANDIDATOS": 5000, "OTIMIZACAO_CHAMADAS": chamadas_otimizacao}
+        analisador = LotofacilAnalisador(df, CONFIG)
+        with st.status("Iniciando processo completo...", expanded=True) as status:
+            st.write("Fase 1 de 2: Descobrindo perfis de jogo no histórico...")
+            perfis_descobertos, _ = analisador.descobrir_perfis(n_perfis)
+            st.success(f"{len(perfis_descobertos)} perfis de jogo foram descobertos!")
+            st.json(perfis_descobertos)
+            st.write("\nFase 2 de 2: Otimizando uma estratégia para cada perfil descoberto...")
+            estrategias_atuais = carregar_estrategias()
+            for i, perfil_alvo in enumerate(perfis_descobertos):
+                nome_perfil = f"Descoberto {i+1}: Soma {perfil_alvo['Soma Média']}, Pares {perfil_alvo['Pares Média']}, Rep {perfil_alvo['Repetidas Média']}"
+                status.update(label=f"Otimizando perfil {i+1}/{len(perfis_descobertos)}: {nome_perfil}")
+                resultado_opt = analisador.otimizar_estrategia(perfil_alvo, status)
+                novo_roi = resultado_opt['roi']
+                novos_pesos = resultado_opt['pesos']
+                st.write(f"Otimização para '{nome_perfil}' concluída com ROI de {novo_roi:.2f}%. Validando...")
+                rois_salvos = [est['roi'] for est in estrategias_atuais]
+                pior_roi_salvo = min(rois_salvos) if rois_salvos else -999
+                if novo_roi > pior_roi_salvo:
+                    nova_estrategia = {"nome": nome_perfil, "tipo": "Descoberto", "roi": novo_roi, "alvo": perfil_alvo, "pesos": novos_pesos}
+                    pior_indice = np.argmin(rois_salvos) if rois_salvos else -1
+                    if len(estrategias_atuais) >= 4 and pior_indice != -1 :
+                        st.write(f"-> Nova estratégia superou '{estrategias_atuais[pior_indice]['nome']}' (ROI {pior_roi_salvo:.2f}%). Substituindo...")
+                        estrategias_atuais[pior_indice] = nova_estrategia
+                    else:
+                        estrategias_atuais.append(nova_estrategia)
+                    salvar_estrategias(estrategias_atuais)
+                    st.success(f"Estratégia '{nome_perfil}' (ROI {novo_roi:.2f}%) foi salva!")
+                else:
+                    st.warning(f"Estratégia para '{nome_perfil}' (ROI {novo_roi:.2f}%) não superou as existentes e foi descartada.")
+            status.update(label="Processo concluído!", state="complete")
+        st.balloons()
+        st.header("Processo Finalizado!")
+        st.info("As melhores estratégias descobertas foram salvas. Elas já estão disponíveis no 'Gerador de Jogos' e no 'Painel de Estratégias'. Atualize a página (F5) para usar.")
+    else:
+        st.info("Ajuste as configurações e clique no botão para iniciar o processo de descoberta e otimização.")
