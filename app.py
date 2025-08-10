@@ -279,21 +279,28 @@ class LotofacilAnalisador:
 # --- FUNÇÕES DE APOIO E INTERFACE ---
 # ==============================================================================
 @st.cache_data(ttl=3600)
+# app.py -> Substitua a função carregar_dados por esta:
+
+@st.cache_data(ttl=3600)
 def carregar_dados():
-    scopes = ['https://www.googleapis.com/auth/spreadsheets','https://www.googleapis.com/auth/drive']
-    gc = gspread.oauth(scopes=scopes)
+    # Carrega as credenciais a partir dos Secrets do Streamlit (o método correto para a nuvem)
+    creds_dict = json.loads(st.secrets["GSPREAD_CREDENTIALS"])
+    gc = gspread.service_account_from_dict(creds_dict)
+    
     spreadsheet = gc.open_by_url("https://docs.google.com/spreadsheets/d/1cc-JxB_-FkOEIeD_t2SZ9RFpKr3deUfCFuTR_2wXCYk/edit?gid=498647709#gid=498647709")
     worksheet = spreadsheet.sheet1
     rows = worksheet.get_all_records()
     df = pd.DataFrame(rows)
+    
+    # Processamento do DataFrame
     bola_cols = [f'Bola{i}' for i in range(1, 16)]
     for col in ['Concurso'] + bola_cols:
         df[col] = pd.to_numeric(df[col], errors='coerce')
     df.dropna(subset=['Concurso'] + bola_cols, inplace=True)
-    df[bola_cols] = df[bola_cols].astype(int); df['Concurso'] = df['Concurso'].astype(int)
+    df[bola_cols] = df[bola_cols].astype(int)
+    df['Concurso'] = df['Concurso'].astype(int)
     df.sort_values(by='Concurso', inplace=True)
     return df
-@st.cache_resource
 def carregar_modelo_ia():
     try:
         genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
