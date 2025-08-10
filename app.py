@@ -1,4 +1,4 @@
-# app.py (v3.5 - Versão Completa, Funcional e Corrigida)
+# app.py (v3.4 - Simulador Restaurado para Calibração)
 
 import streamlit as st
 import pandas as pd
@@ -22,13 +22,14 @@ from sklearn.cluster import KMeans
 # ==============================================================================
 ESTRATEGIAS_FILE = "estrategias.json"
 
+# Valores que vamos calibrar
 ESTRATEGIA_PADRAO_DEFAULT = {
-    "nome": "Padrão (Manual)", "tipo": "Manual", "roi": -75.0,
+    "nome": "Padrão (Manual)", "tipo": "Manual", "roi": -15.0,
     "alvo": {'Soma Média': 195, 'Pares Média': 8, 'Repetidas Média': 9},
     "pesos": {'peso_proximidade_soma': 20, 'peso_proximidade_pares': 10, 'peso_proximidade_repetidas': 20, 'peso_por_fria': 15, 'peso_por_quente': 5}
 }
 ESTRATEGIA_CONTRARIO_DEFAULT = {
-    "nome": "Contrário (Manual)", "tipo": "Manual", "roi": -75.0,
+    "nome": "Contrário (Manual)", "tipo": "Manual", "roi": -10.0,
     "alvo": {'Soma Média': 180, 'Pares Média': 7, 'Repetidas Média': 7},
     "pesos": {'peso_proximidade_soma': 10, 'peso_proximidade_pares': 5, 'peso_proximidade_repetidas': 10, 'peso_por_fria': 25, 'peso_por_quente': -10}
 }
@@ -279,28 +280,21 @@ class LotofacilAnalisador:
 # --- FUNÇÕES DE APOIO E INTERFACE ---
 # ==============================================================================
 @st.cache_data(ttl=3600)
-# app.py -> Substitua a função carregar_dados por esta:
-
-@st.cache_data(ttl=3600)
 def carregar_dados():
-    # Carrega as credenciais a partir dos Secrets do Streamlit (o método correto para a nuvem)
     creds_dict = json.loads(st.secrets["GSPREAD_CREDENTIALS"])
     gc = gspread.service_account_from_dict(creds_dict)
-    
     spreadsheet = gc.open_by_url("https://docs.google.com/spreadsheets/d/1cc-JxB_-FkOEIeD_t2SZ9RFpKr3deUfCFuTR_2wXCYk/edit?gid=498647709#gid=498647709")
     worksheet = spreadsheet.sheet1
     rows = worksheet.get_all_records()
     df = pd.DataFrame(rows)
-    
-    # Processamento do DataFrame
     bola_cols = [f'Bola{i}' for i in range(1, 16)]
     for col in ['Concurso'] + bola_cols:
         df[col] = pd.to_numeric(df[col], errors='coerce')
     df.dropna(subset=['Concurso'] + bola_cols, inplace=True)
-    df[bola_cols] = df[bola_cols].astype(int)
-    df['Concurso'] = df['Concurso'].astype(int)
+    df[bola_cols] = df[bola_cols].astype(int); df['Concurso'] = df['Concurso'].astype(int)
     df.sort_values(by='Concurso', inplace=True)
     return df
+@st.cache_resource
 def carregar_modelo_ia():
     try:
         genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
@@ -344,7 +338,13 @@ try:
         for i, est in enumerate(estrategias_atuais):
             st.write(f"**{i+1}. {est['nome']}** (ROI: {est['roi']:.2f}%)")
 except Exception as e:
-    st.error(f"Ocorreu um erro fatal no carregamento: {e}"); st.stop()
+    st.error(f"Ocorreu um erro fatal no carregamento. Verifique o terminal para detalhes.")
+    st.error(f"Detalhe do erro: {e}")
+    print("\n" + "="*50)
+    print("--- ERRO DETALHADO NO TERMINAL ---")
+    traceback.print_exc()
+    print("="*50 + "\n")
+    st.stop()
 
 if modo_app == "Gerador de Jogos":
     st.header("Gerador de Jogos para o Próximo Concurso")
@@ -368,7 +368,7 @@ if modo_app == "Gerador de Jogos":
         else:
             st.error("Estratégia selecionada não foi encontrada.")
     else:
-        st.info("Ajuste as configurações e clique no botão para gerar os jogos.")
+        st.info("Ajuste as configurações e clique para gerar os jogos.")
 
 elif modo_app == "Simulador de Estratégias":
     st.header("Simulador de Estratégias (Backtest Financeiro)")
@@ -376,7 +376,8 @@ elif modo_app == "Simulador de Estratégias":
     concursos_a_testar = st.sidebar.slider("Quantos concursos testar?", min_value=10, max_value=500, value=50, step=10)
     jogos_por_simulacao = st.sidebar.slider("Quantos jogos simular por concurso?", min_value=1, max_value=50, value=10, step=1)
     if st.sidebar.button("Rodar Simulação", type="primary", use_container_width=True):
-        CONFIG = {"NUMERO_DE_CONCURSOS_A_TESTAR": concursos_a_testar, "JOGOS_POR_SIMULACAO": jogos_por_simulacao, "DEZENAS_POR_JOGO": 15, "NUM_CANDIDATOS": 10000, "ESTRATEGIAS_ATUAIS": carregar_estrategias()}
+        estrategias_atuais = carregar_estrategias()
+        CONFIG = {"NUMERO_DE_CONCURSOS_A_TESTAR": concursos_a_testar, "JOGOS_POR_SIMULACAO": jogos_por_simulacao, "DEZENAS_POR_JOGO": 15, "NUM_CANDIDATOS": 10000, "ESTRATEGIAS_ATUAIS": estrategias_atuais}
         analisador = LotofacilAnalisador(df, CONFIG)
         resultados = analisador.rodar_simulacao()
         st.subheader("Resultados Financeiros da Simulação")
