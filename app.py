@@ -1,4 +1,4 @@
-# app.py (v4.2 - Análise Pós-Sorteio)
+# app.py (v3.4 - Simulador Restaurado para Calibração)
 
 import streamlit as st
 import pandas as pd
@@ -19,10 +19,11 @@ from sklearn.cluster import KMeans
 import re
 
 # ==============================================================================
-# --- GERENCIAMENTO DE ESTRATÉGIAS E CONFIGS ---
+# --- GERENCIAMENTO DE ESTRATÉGIAS (Carregar e Salvar) ---
 # ==============================================================================
 ESTRATEGIAS_FILE = "estrategias.json"
 
+# Valores que vamos calibrar
 ESTRATEGIA_PADRAO_DEFAULT = {
     "nome": "Padrão (Manual)", "tipo": "Manual", "roi": -70.0,
     "alvo": {'Soma Média': 195, 'Pares Média': 8, 'Repetidas Média': 9, 'Primos Média': 5, 'Moldura Média': 10},
@@ -37,14 +38,19 @@ ESTRATEGIA_CONTRARIO_DEFAULT = {
 def carregar_estrategias():
     if os.path.exists(ESTRATEGIAS_FILE):
         with open(ESTRATEGIAS_FILE, 'r') as f:
-            try: return json.load(f)
-            except json.JSONDecodeError: return [ESTRATEGIA_PADRAO_DEFAULT, ESTRATEGIA_CONTRARIO_DEFAULT]
+            try:
+                return json.load(f)
+            except json.JSONDecodeError:
+                return [ESTRATEGIA_PADRAO_DEFAULT, ESTRATEGIA_CONTRARIO_DEFAULT]
     return [ESTRATEGIA_PADRAO_DEFAULT, ESTRATEGIA_CONTRARIO_DEFAULT]
 
 def salvar_estrategias(lista_estrategias):
     with open(ESTRATEGIAS_FILE, 'w') as f:
         json.dump(lista_estrategias, f, indent=4)
 
+# ==============================================================================
+# --- CONFIGURAÇÕES FINANCEIRAS ---
+# ==============================================================================
 CUSTO_JOGO_15_DEZENAS = 3.50
 PREMIOS_FIXOS = { 11: 7.0, 12: 14.0, 13: 35.0 }
 
@@ -165,7 +171,7 @@ class LotofacilAnalisador:
         st.toast("Solicitando análise da IA do Gemini...")
         analise_ia = self._obter_analise_ia(jogos_com_score, dados_futuro, regras_dinamicas, estrategia['nome'])
         return {"jogos": jogos_com_score, "analise": analise_ia}
-        
+
     def rodar_simulacao(self):
         concursos_para_testar = self.df.tail(self.config['NUMERO_DE_CONCURSOS_A_TESTAR'])
         resultados_por_estrategia = {est['nome']: {'resumo_acertos': {i: 0 for i in range(11, 16)}, 'custo': 0.0, 'retorno': 0.0} for est in self.estrategias}
@@ -211,7 +217,7 @@ class LotofacilAnalisador:
             "historico_detalhado": historico_jogos_detalhado,
             "metricas_gerais": {"custo_total": custo_total, "retorno_total": retorno_total, "lucro_total": lucro_total, "roi_total": roi_total}
         }
-        
+
     def descobrir_perfis(self, n_perfis):
         df_analise = self.df.copy()
         bola_cols = [f'Bola{i}' for i in range(1, 16)]
