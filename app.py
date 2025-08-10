@@ -374,7 +374,7 @@ st.sidebar.title("Ferramentas")
 # --- MENU CORRIGIDO COM TODAS AS 4 OPÇÕES ---
 modo_app = st.sidebar.radio(
     "Escolha o que deseja fazer:",
-    ["Gerador de Jogos", "Conferidor de Apostas", "Painel de Estratégias", "Laboratório de IA"],
+    ["Gerador de Jogos","Simulador de Estratégias" , "Conferidor de Apostas", "Painel de Estratégias", "Laboratório de IA"],
     key="navigation"
 )
 
