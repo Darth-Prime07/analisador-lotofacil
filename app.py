@@ -1,4 +1,4 @@
-# app.py (v4.1 - Simulador Restaurado)
+# app.py (v4.2 - Análise Pós-Sorteio)
 
 import streamlit as st
 import pandas as pd
@@ -19,10 +19,10 @@ from sklearn.cluster import KMeans
 import re
 
 # ==============================================================================
-# --- GERENCIAMENTO DE ESTRATÉGIAS, CONFIGS, CLASSE E FUNÇÕES DE APOIO ---
-# (Nenhuma alteração em toda a lógica e estrutura, apenas na interface abaixo)
+# --- GERENCIAMENTO DE ESTRATÉGIAS E CONFIGS ---
 # ==============================================================================
 ESTRATEGIAS_FILE = "estrategias.json"
+
 ESTRATEGIA_PADRAO_DEFAULT = {
     "nome": "Padrão (Manual)", "tipo": "Manual", "roi": -70.0,
     "alvo": {'Soma Média': 195, 'Pares Média': 8, 'Repetidas Média': 9, 'Primos Média': 5, 'Moldura Média': 10},
@@ -33,17 +33,24 @@ ESTRATEGIA_CONTRARIO_DEFAULT = {
     "alvo": {'Soma Média': 180, 'Pares Média': 7, 'Repetidas Média': 7, 'Primos Média': 6, 'Moldura Média': 11},
     "pesos": {'peso_proximidade_soma': 10, 'peso_proximidade_pares': 5, 'peso_proximidade_repetidas': 10, 'peso_por_fria': 25, 'peso_por_quente': -10, 'peso_proximidade_primos': 0, 'peso_proximidade_moldura': 0}
 }
+
 def carregar_estrategias():
     if os.path.exists(ESTRATEGIAS_FILE):
         with open(ESTRATEGIAS_FILE, 'r') as f:
             try: return json.load(f)
             except json.JSONDecodeError: return [ESTRATEGIA_PADRAO_DEFAULT, ESTRATEGIA_CONTRARIO_DEFAULT]
     return [ESTRATEGIA_PADRAO_DEFAULT, ESTRATEGIA_CONTRARIO_DEFAULT]
+
 def salvar_estrategias(lista_estrategias):
     with open(ESTRATEGIAS_FILE, 'w') as f:
         json.dump(lista_estrategias, f, indent=4)
+
 CUSTO_JOGO_15_DEZENAS = 3.50
 PREMIOS_FIXOS = { 11: 7.0, 12: 14.0, 13: 35.0 }
+
+# ==============================================================================
+# --- CLASSE DO ANALISADOR ---
+# ==============================================================================
 class LotofacilAnalisador:
     def __init__(self, df, config, model=None):
         self.df = df; self.config = config; self.model = model
@@ -59,6 +66,7 @@ class LotofacilAnalisador:
                 Integer(-50, 0, name='peso_por_quente')
             ]
         }
+
     def _get_dezenas_frias(self, df, n=8):
         dezenas = np.arange(1, 26); atraso = {}
         ultimo_concurso_geral = df['Concurso'].max(); colunas_dezenas = [f'Bola{i+1}' for i in range(15)]
@@ -66,6 +74,7 @@ class LotofacilAnalisador:
             ultimo_concurso_dezena = df[df[colunas_dezenas].eq(dezena).any(axis=1)]['Concurso'].max()
             atraso[dezena] = len(df) if pd.isna(ultimo_concurso_dezena) else ultimo_concurso_geral - ultimo_concurso_dezena
         return sorted(atraso, key=atraso.get, reverse=True)[:n]
+
     def _analisar_tendencias(self, df_historico, n_concursos=15):
         df_tendencia = df_historico.tail(n_concursos); regras = {}
         colunas_bolas = [f'Bola{i+1}' for i in range(15)]
@@ -74,8 +83,10 @@ class LotofacilAnalisador:
         somas = [sum(row[colunas_bolas]) for _, row in df_tendencia.iterrows()]
         regras['soma_ideal'] = int(statistics.mean(somas)) if somas else 195
         return regras
+
     def _gerar_candidato_guiado(self, dezenas_a_gerar):
         return sorted(random.sample(self.universo, dezenas_a_gerar))
+        
     def _pontuar_jogo_dinamico(self, jogo, dados, pesos, alvo):
         score = 0
         stats = {
@@ -98,6 +109,7 @@ class LotofacilAnalisador:
         score += stats['frias'] * pesos.get('peso_por_fria', 0)
         score += stats['quentes'] * pesos.get('peso_por_quente', 0)
         return score
+
     def _gerar_melhores_jogos(self, n_jogos, dados, estrategia):
         pesos = estrategia['pesos']; alvo = estrategia.get('alvo'); num_candidatos = self.config.get("NUM_CANDIDATOS", 10000)
         jogos_pontuados = []
@@ -114,6 +126,7 @@ class LotofacilAnalisador:
                 jogos_vistos.add(tuple(jogo))
             if len(jogos_finais_com_score) == n_jogos: break
         return jogos_finais_com_score
+
     def _obter_analise_ia(self, jogos_com_score, dados, regras, perfil):
         if not self.model or not jogos_com_score: return None
         jogos_formatados = []
@@ -138,10 +151,12 @@ class LotofacilAnalisador:
             response = self.model.generate_content(prompt)
             return response.text
         except Exception as e: return f"Ocorreu um erro ao chamar a API: {e}"
+
     def gerar_jogos_com_analise(self, estrategia, n_jogos):
         st.toast("Analisando tendências do último concurso...")
         regras_dinamicas = self._analisar_tendencias(self.df)
-        dados_futuro = {}; dados_futuro['concurso_anterior'] = sorted([int(self.df.iloc[-1][f'Bola{i}']) for i in range(1, 16)])
+        dados_futuro = {}
+        dados_futuro['concurso_anterior'] = sorted([int(self.df.iloc[-1][f'Bola{i}']) for i in range(1, 16)])
         frequencias = pd.Series(self.df[[f'Bola{i}' for i in range(1, 16)]].values.flatten()).value_counts()
         dados_futuro['quentes'] = sorted(list(frequencias.head(8).index.astype(int)))
         dados_futuro['frias'] = self._get_dezenas_frias(self.df, n=8)
@@ -150,6 +165,7 @@ class LotofacilAnalisador:
         st.toast("Solicitando análise da IA do Gemini...")
         analise_ia = self._obter_analise_ia(jogos_com_score, dados_futuro, regras_dinamicas, estrategia['nome'])
         return {"jogos": jogos_com_score, "analise": analise_ia}
+        
     def rodar_simulacao(self):
         concursos_para_testar = self.df.tail(self.config['NUMERO_DE_CONCURSOS_A_TESTAR'])
         resultados_por_estrategia = {est['nome']: {'resumo_acertos': {i: 0 for i in range(11, 16)}, 'custo': 0.0, 'retorno': 0.0} for est in self.estrategias}
@@ -195,6 +211,7 @@ class LotofacilAnalisador:
             "historico_detalhado": historico_jogos_detalhado,
             "metricas_gerais": {"custo_total": custo_total, "retorno_total": retorno_total, "lucro_total": lucro_total, "roi_total": roi_total}
         }
+        
     def descobrir_perfis(self, n_perfis):
         df_analise = self.df.copy()
         bola_cols = [f'Bola{i}' for i in range(1, 16)]
@@ -225,6 +242,7 @@ class LotofacilAnalisador:
             }
             perfis_analisados.append(perfil)
         return perfis_analisados, features_df['perfil_descoberto'].value_counts()
+    
     def _backtest_silencioso(self, pesos, alvo):
         concursos_para_testar = self.df.tail(self.config['NUMERO_DE_CONCURSOS_A_TESTAR'])
         custo_total = 0.0; retorno_total = 0.0
@@ -241,6 +259,7 @@ class LotofacilAnalisador:
                 retorno_total += PREMIOS_FIXOS.get(acertos, 0.0)
         roi = ((retorno_total - custo_total) / custo_total * 100) if custo_total > 0 else -100
         return roi
+
     def otimizar_estrategia(self, perfil_alvo, status_placeholder):
         search_space = self.search_spaces.get("Descoberto")
         @use_named_args(search_space)
@@ -253,11 +272,13 @@ class LotofacilAnalisador:
                 st.write(log_message)
             resultados_parciais.append(roi)
             return -roi
+        
         resultados_parciais = []
         resultado_otimizacao = gp_minimize(func=funcao_objetivo, dimensions=search_space, n_calls=self.config['OTIMIZACAO_CHAMADAS'], random_state=42)
         melhor_roi = -resultado_otimizacao.fun
         melhores_pesos = {dim.name: int(val) for dim, val in zip(search_space, resultado_otimizacao.x)}
         return {"roi": melhor_roi, "pesos": melhores_pesos}
+
     def simular_estrategia_unica(self, estrategia):
         concursos_para_testar = self.df.tail(self.config['NUMERO_DE_CONCURSOS_A_TESTAR'])
         resultados = {'resumo_acertos': {i: 0 for i in range(11, 16)}, 'custo': 0.0, 'retorno': 0.0}
@@ -371,10 +392,9 @@ st.set_page_config(layout="wide", page_title="Analisador Lotofácil com IA")
 st.title("🤖 Analisador Inteligente da Lotofácil")
 
 st.sidebar.title("Ferramentas")
-# --- MENU CORRIGIDO COM TODAS AS 4 OPÇÕES ---
 modo_app = st.sidebar.radio(
     "Escolha o que deseja fazer:",
-    ["Gerador de Jogos","Simulador de Estratégias" , "Conferidor de Apostas", "Painel de Estratégias", "Laboratório de IA"],
+    ["Gerador de Jogos", "Conferidor de Apostas", "Simulador de Estratégias", "Painel de Estratégias", "Laboratório de IA"],
     key="navigation"
 )
 
