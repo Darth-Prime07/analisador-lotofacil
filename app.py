@@ -1,4 +1,4 @@
-# app.py (v3.4 - Simulador Restaurado para Calibração)
+# app.py (v3.5 - Final, com Simulador para Calibração)
 
 import streamlit as st
 import pandas as pd
@@ -319,6 +319,9 @@ def gerar_graficos(resultados_por_estrategia, historico_lucro):
     ax2.set_ylabel('Saldo Acumulado (R$)'); ax2.grid(True, which='both', linestyle='--', linewidth=0.5); ax2.legend()
     return fig1, fig2
 
+# ==============================================================================
+# --- INTERFACE PRINCIPAL DO STREAMLIT ---
+# ==============================================================================
 st.set_page_config(layout="wide", page_title="Analisador Lotofácil com IA")
 st.title("🤖 Analisador Inteligente da Lotofácil")
 
@@ -340,10 +343,7 @@ try:
 except Exception as e:
     st.error(f"Ocorreu um erro fatal no carregamento. Verifique o terminal para detalhes.")
     st.error(f"Detalhe do erro: {e}")
-    print("\n" + "="*50)
-    print("--- ERRO DETALHADO NO TERMINAL ---")
-    traceback.print_exc()
-    print("="*50 + "\n")
+    print("\n" + "="*50); print("--- ERRO DETALHADO NO TERMINAL ---"); traceback.print_exc(); print("="*50 + "\n")
     st.stop()
 
 if modo_app == "Gerador de Jogos":
