@@ -1,0 +1,30 @@
+{
+    "Padr\u00e3o": {
+        "roi": -72.2,
+        "pesos": {
+            "frias_otimo": 42,
+            "frias_bom": 9,
+            "quentes_bom": 41,
+            "ciclo_bom": 34,
+            "sincronia_repetidas_otimo": 14,
+            "sincronia_repetidas_bom": 2,
+            "sincronia_soma_otimo": 14,
+            "sincronia_soma_bom": 4,
+            "equilibrio_pares": 3,
+            "equilibrio_miolo": 10
+        }
+    },
+    "Contr\u00e1rio": {
+        "roi": -70.0,
+        "pesos": {
+            "frias_super": 41,
+            "frias_otimo": 11,
+            "ciclo_super": 53,
+            "quentes_penalidade": -28,
+            "contratendencia_repetidas": 22,
+            "contratendencia_soma": 38,
+            "equilibrio_pares": 11,
+            "equilibrio_miolo": 6
+        }
+    }
+}

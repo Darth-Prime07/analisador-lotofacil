@@ -1,0 +1,9 @@
+streamlit
+pandas
+numpy
+gspread
+google-generativeai
+oauth2-client
+matplotlib
+scikit-optimize
+scikit-learn
