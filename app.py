@@ -1,4 +1,4 @@
-# app.py (v3.5 - Final, com Simulador para Calibração)
+# app.py (v3.6 - Baseline de ROI Calibrado)
 
 import streamlit as st
 import pandas as pd
@@ -22,14 +22,14 @@ from sklearn.cluster import KMeans
 # ==============================================================================
 ESTRATEGIAS_FILE = "estrategias.json"
 
-# Valores que vamos calibrar
+# --- VALORES DE ROI ATUALIZADOS PARA UM BASELINE REALISTA ---
 ESTRATEGIA_PADRAO_DEFAULT = {
-    "nome": "Padrão (Manual)", "tipo": "Manual", "roi": -15.0,
+    "nome": "Padrão (Manual)", "tipo": "Manual", "roi": -70.0,
     "alvo": {'Soma Média': 195, 'Pares Média': 8, 'Repetidas Média': 9},
     "pesos": {'peso_proximidade_soma': 20, 'peso_proximidade_pares': 10, 'peso_proximidade_repetidas': 20, 'peso_por_fria': 15, 'peso_por_quente': 5}
 }
 ESTRATEGIA_CONTRARIO_DEFAULT = {
-    "nome": "Contrário (Manual)", "tipo": "Manual", "roi": -10.0,
+    "nome": "Contrário (Manual)", "tipo": "Manual", "roi": -70.0,
     "alvo": {'Soma Média': 180, 'Pares Média': 7, 'Repetidas Média': 7},
     "pesos": {'peso_proximidade_soma': 10, 'peso_proximidade_pares': 5, 'peso_proximidade_repetidas': 10, 'peso_por_fria': 25, 'peso_por_quente': -10}
 }
@@ -336,10 +336,13 @@ try:
     df = carregar_dados()
     model = carregar_modelo_ia() if modo_app == "Gerador de Jogos" else None
     st.sidebar.success(f"Base de dados carregada! \n\nÚltimo concurso: {df['Concurso'].max()}")
-    with st.sidebar.expander("Ver Estratégias Salvas"):
-        estrategias_atuais = carregar_estrategias()
+    
+    # Atualiza as estratégias em tempo real na barra lateral
+    estrategias_atuais = carregar_estrategias()
+    with st.sidebar.expander("Ver Estratégias Salvas", expanded=True):
         for i, est in enumerate(estrategias_atuais):
-            st.write(f"**{i+1}. {est['nome']}** (ROI: {est['roi']:.2f}%)")
+            st.write(f"**{est['nome']}** (ROI: {est['roi']:.2f}%)")
+
 except Exception as e:
     st.error(f"Ocorreu um erro fatal no carregamento. Verifique o terminal para detalhes.")
     st.error(f"Detalhe do erro: {e}")
@@ -349,12 +352,14 @@ except Exception as e:
 if modo_app == "Gerador de Jogos":
     st.header("Gerador de Jogos para o Próximo Concurso")
     st.sidebar.header("Configurações de Geração")
-    estrategias_salvas = carregar_estrategias()
-    nomes_estrategias = [est['nome'] for est in estrategias_salvas]
+    
+    nomes_estrategias = [est['nome'] for est in estrategias_atuais]
     estrategia_selecionada_nome = st.sidebar.selectbox("Escolha a Estratégia a ser usada:", nomes_estrategias)
+    
     jogos_a_gerar = st.sidebar.slider("Quantos jogos você deseja gerar?", min_value=1, max_value=30, value=6, step=1)
+    
     if st.sidebar.button("Gerar Jogos Inteligentes", type="primary", use_container_width=True):
-        estrategia_obj = next((item for item in estrategias_salvas if item["nome"] == estrategia_selecionada_nome), None)
+        estrategia_obj = next((item for item in estrategias_atuais if item["nome"] == estrategia_selecionada_nome), None)
         if estrategia_obj:
             CONFIG = {"NUM_CANDIDATOS": 20000}
             analisador = LotofacilAnalisador(df, CONFIG, model)
@@ -375,17 +380,19 @@ elif modo_app == "Simulador de Estratégias":
     st.sidebar.header("Configurações da Simulação")
     concursos_a_testar = st.sidebar.slider("Quantos concursos testar?", min_value=10, max_value=500, value=50, step=10)
     jogos_por_simulacao = st.sidebar.slider("Quantos jogos simular por concurso?", min_value=1, max_value=50, value=10, step=1)
+    
     if st.sidebar.button("Rodar Simulação", type="primary", use_container_width=True):
-        estrategias_atuais = carregar_estrategias()
-        CONFIG = {"NUMERO_DE_CONCURSOS_A_TESTAR": concursos_a_testar, "JOGOS_POR_SIMULACAO": jogos_por_simulacao, "DEZENAS_POR_JOGO": 15, "NUM_CANDIDATOS": 10000, "ESTRATEGIAS_ATUAIS": estrategias_atuais}
+        CONFIG = {"NUMERO_DE_CONCURSOS_A_TESTAR": concursos_a_testar, "JOGOS_POR_SIMULACAO": jogos_por_simulacao, "DEZENAS_POR_JOGO": 15, "NUM_CANDIDATOS": 10000, "ESTRATEGIAS_ATUAIS": carregar_estrategias()}
         analisador = LotofacilAnalisador(df, CONFIG)
         resultados = analisador.rodar_simulacao()
+        
         st.subheader("Resultados Financeiros da Simulação")
         m = resultados['metricas_gerais']
         kpi1, kpi2, kpi3 = st.columns(3)
         kpi1.metric("Lucro / Prejuízo Total", f"R$ {m['lucro_total']:.2f}", f"{m['roi_total']:.2f}% ROI")
         kpi2.metric("Custo Total", f"R$ {m['custo_total']:.2f}")
         kpi3.metric("Retorno Total", f"R$ {m['retorno_total']:.2f}")
+
         st.markdown("---")
         st.subheader("Análise Detalhada por Estratégia")
         res_est = resultados['resultados_por_estrategia']
@@ -400,10 +407,12 @@ elif modo_app == "Simulador de Estratégias":
                 df_acertos = pd.DataFrame(list(dados_est['resumo_acertos'].items()), columns=['Acertos', 'Quantidade']).sort_values(by='Acertos')
                 df_acertos = df_acertos[df_acertos['Quantidade'] > 0].set_index('Acertos')
                 st.dataframe(df_acertos.style.set_properties(**{'text-align': 'center', 'font-size': '13px'}), use_container_width=True)
+        
         st.subheader("Gráficos de Desempenho")
         fig1, fig2 = gerar_graficos(res_est, resultados['historico_lucro'])
         st.pyplot(fig1)
         st.pyplot(fig2)
+
         with st.expander("Ver Detalhes dos Jogos Simulados (do mais recente ao mais antigo)"):
             for resultado_concurso in reversed(resultados['historico_detalhado']):
                 st.markdown(f"#### Concurso: **{resultado_concurso['concurso_n']}**")
